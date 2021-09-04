@@ -23,13 +23,11 @@ We are now embraced with the information era. When you search for `system design
   Using a modern mandarin adjective to describe, this book is YYDS (永远的神). I've already felt the importance of this book before even starting reading it, when seeing countless praises and favorable comments about this book. The legend has it, that after reading it several times, you'll find your internal strength (内功) improve, seeing the world from a higher level, and living with the princess happily ever after... My highest recommendation for this book if you're able to start the preparation early.
 
 - Posts
-
   - [经验总结] 1000+刷题经验及面试感悟分享之系统设计总结 ([link](https://www.1point3acres.com/bbs/thread-771667-1-1.html)).
   - Scaling Pinterest - From 0 To 10s Of Billions Of Page Views A Month In Two Years ([link](http://highscalability.com/blog/2013/4/15/scaling-pinterest-from-0-to-10s-of-billions-of-page-views-a.html)).
   - Avoiding Double Payments in a Distributed Payments System ([link](https://medium.com/airbnb-engineering/avoiding-double-payments-in-a-distributed-payments-system-2981f6b070bb)).
 
 - Videos
-
  - Distributed systems course, offered by the author of DDIA ([link](https://martin.kleppmann.com/2020/11/18/distributed-systems-and-elliptic-curves.html)).
  - YouTuber [Scott Shi](https://www.youtube.com/c/ScottShiCS).
  - YouTuber [System Design Interview](https://www.youtube.com/c/SystemDesignInterview).
