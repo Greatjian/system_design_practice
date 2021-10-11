@@ -38,7 +38,7 @@ We are now embraced with the information era. When you search for `system design
 
 Gradually updated. Keep posted!
 
-- [DDIA](/DDIA_notes.md) ![12%](https://progress-bar.dev/12)
+- [DDIA](/DDIA_notes.md) ![19%](https://progress-bar.dev/19)
 - [Grokking the System Design Interview](/Grokking_notes.md) ![0%](https://progress-bar.dev/0)
 - [Post and video summary](/Summary_notes.md) ![0%](https://progress-bar.dev/0)
 
