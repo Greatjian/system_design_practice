@@ -7,6 +7,7 @@
 - [CP1 Reliable, Scalable, and Maintainable Applications](#CP1)
 - [CP2 Data Models and Query Languages](#CP2)
 - [CP3 Storage and Retrieval](#CP3)
+- [CP4 Encoding and Evolution](#CP4)
 
 ## CP1
 
@@ -307,3 +308,122 @@ Storage and Retrieval
     - Common special case: data cube
     - Data Cube: a grid of aggregates grouped by different dimensions
     - Certain queries are fast since they are precomputed, but less flexibility
+
+## CP4
+
+Encoding and Evolution
+
+Change of data format / schema + rolling upgrade / staged rollout = old/new code version and schema coexist in the system at the same time
+
+Backward compatibility: new code can read old data format
+
+Forward compatibility: old code can read new data format
+
+- Formats for Encoding Data
+
+    - Two representations of data
+
+        - Objects in memory in data structures for efficient access and manipulation
+        - A self-contained sequence of bytes to write to a file / send over the network
+        - Encoding / serialization vs decoding / deserialization
+
+    - Language Specific Formats
+
+        - Language built-in support
+        - Encoding is tied to a particular programming language
+        - Decoding needs to instantiate arbitrary classes - security problem
+        - Data versioning for forward / backward compatibility
+        - Efficiency problem (CPU time, size)
+
+    - JSON, XML, CSV Textual Formats
+
+        - Ambiguity in encoding numbers (precision, large numbers)
+        - JSON and XML don't support binary strings
+        - Complicated optional schema support for JSON and XML
+        - No schema support for CSV
+        - but...
+        - Human readable, good as data interchange formats where no efficiency requires
+        - Binary encoding for JSON and XML: use a lot of space of object field names since there is no schema
+
+    - Thrift (fb) and Protocol Buffers (Google)
+
+        - Binary encoding, require a schema
+        - Field tags in schema definition to replace field names
+        - Compatibility for schema evolution
+
+            - Give new field a new tag
+            - New field cannot be required
+            - Can only remove optional fields
+            - Never use the same tag number again
+
+        - Why schema
+
+            - Much more detailed validation rules
+            - More compact in binary formats
+            - Valuable for documentation
+            - Check forward / backward compatibility
+            - Enable type checking at compile time for statically typed programming languages
+
+    - Apache Avro
+
+        - Binary encoding, no tag numbers in the schema
+        - Writer's schema (write a file, send over the network) compatible with reader's schema (read a file, receive from the network)
+        - Schema resolution matches fields by field name, no order required
+        - Only add / remove a field with a default value
+        - Can change the field data type provided that they are convertible
+        - Reader accesses write's schema
+
+            - Large file with lots of records (Writer only needs to include once at the beginning of the file)
+            - Database with individually written records (reader can fetch a record, extract the version number, fetch the schema)
+            - Sending records over a network connection (bidiretion RPC protocal)
+
+        - No need to pay extra attention for tag numbers in terms of a schema change (friendlier to dynamically typed schemas)
+        - No code generation (No need for dynamically typed programming languages)
+
+- Modes of Data Flow
+
+    - Dataflow Through Databases
+
+        - Write & read: sending a message to your future self
+        - Preserve both forward and backward compatibility
+        - Extra caution: e.g. support preservation of unknown field
+        - Data outlives code, try to avoid rewriting / migrating data into a new schema
+
+    - Dataflow through Services: REST and RPC
+
+        - Client and server, API, microservice
+        - Web service: using HTTP protocal
+
+            - REST: a design philosophy
+
+                - Simple data format (e.g. JSON)
+                - URL for identifying resourses
+                - Use HTTP features as much as we can (cache control, authentication, content type negotiation)
+
+            - SOAP
+
+                - XML based protocal
+                - Enables code generation
+                - Access remote service via local classes and method calls (not useful in dynamically typed programming languages)
+                - An example of RPC
+
+        - Problems with RPC (vs local method calls)
+
+            - Unpredictable due to network problems
+            - No result due to timeout
+            - Retry mutiple times due to lost response
+            - Wilder range for latency
+            - Serialization vs reference / pointer
+            - Translate datatypes across different languages
+
+    - Message - Passing Dataflow
+
+        - Asynchronous message - passing system
+        - Intermediary message broker (message queue / middleware)
+
+            - Act as a buffer
+            - Automatically redeliver messages
+            - Avoid the sender to know IP address and port number of the recipient (useful in cloud deployment)
+            - Allow one message to be sent to several recipients
+            - Logically decouples the sender from the recipient
+            - But ... communication is usually one way 
