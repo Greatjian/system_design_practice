@@ -9,6 +9,10 @@
 - [CP3 Storage and Retrieval](#CP3)
 - [CP4 Encoding and Evolution](#CP4)
 
+**Part 2 Distributed Data**
+
+- [CP5 Replication](#CP5)
+
 ## CP1
 
 Reliable, Scalable, and Maintainable Applications
@@ -426,4 +430,247 @@ Forward compatibility: old code can read new data format
             - Avoid the sender to know IP address and port number of the recipient (useful in cloud deployment)
             - Allow one message to be sent to several recipients
             - Logically decouples the sender from the recipient
-            - But ... communication is usually one way 
+            - But ... communication is usually one way
+
+# Part 2 Distributed Data
+
+Distribute a database across multiple machines
+
+- Scalability / throughtput: spread the load
+- Fault tolerance: redundancy to handle crash / network issue
+- Latency: serve users on geographically-closed data centers to save network time
+
+Vertical scaling: RAM/CPU cost grows faster than linearly, limited fault tolerance
+
+Horizontal scaling: good for price, latency and fault tolerance, but add extra complexity
+
+## CP5
+
+Replication
+
+- Leaders and followers
+
+   - One replica as the leader, others as the followers
+   - Leader handles writes, followers handle reads
+   - Leader sends data change log (replication log) to followers
+   - Single-leader replication: no conflict resolution
+   - Multi-leader / leaderless replication: less latency, higher availability, better fault tolerance, but weaker consistency guarantee
+
+- Sync vs async replication
+
+   - Sync: leader waits for the follower(s) to receive the update then confirm sunccessful writes to the client
+   - Followers is guaranteed to be up-to-date, but may take a long time if any follower doesn't respond
+   - Often only one replica is configured synchronous
+   - Async: leader doesn't wait for follower's response before returning write result to the client
+   - Leader may fail and writes will lose, but faster
+
+- Set up new followers
+
+   - Take a consistent snapshot from the leader, and copy it to the follower
+   - The snapshot is associated with the exact position in the replication log
+   - The follower proceeds with the rest of log actions
+
+- Handling node outages
+
+   - Follower failure
+
+      - Find the position in the replication log from its last transaction
+      - Request for the rest of data changes
+
+   - Leader failure (failover)
+
+      - Determine that the leader has failed: sending frequently bounced messages
+      back and forth between replicas (e.g. 30s)
+
+      - Choosing a new leader (replica with the most up-to-date data changes)
+      - Reconfigure the system to use the new leader
+      - Possible bad senario
+
+         - Not-updated writes in the old leader in async replication: discarding
+         writes violates client durability expectation
+
+         - Two nodes both believe they are the leader
+         - Right timeout to determine leader is dead. Longer -> longer recovery time;
+         shorter -> unnecessary failover due to temporary load spike
+
+- Replication logs
+
+   - Statement-based replication
+
+      - SQL statements
+      - nondeterministic function may cause difference in each replica
+      - Must follow the same order, which limits multiple conccurent executing transactions
+      - statements have side effects (triggers, UDF) to be nondeterministic
+
+   - Write-ahead log (WAL)
+
+      - Append-only sequence of bytes containing all writes to the database
+      - Good: follower can process the log to catch up with the leader
+      - Bad: Bytes are low level data that couples closely to the storage engine (e.g. disk blocks)
+
+   - Logical (row-based) log replication
+
+      - Row-level records, decouple from storage engine internals
+      - Record all column value for a new row
+      - Identifiers for a deleted/updated row
+
+   - Trigger-based replication
+
+      - Trigger lets you to register custom application code that is automatically
+      executed during data change
+
+      - Flexible, but prone to bugs and have more overheads
+
+- Replication lag
+
+   - Application reads from async follower that has fallen behind
+   - Possible problems
+
+      - Reading your own writes
+
+         - Read-after-write consistency
+
+              - Read from leader for something that user may have modified (e.g. own user profile)
+              - Track the last modified update and only serve reads from the leader/followers that have a more recent update
+              - Client sends the timestamp (logical: log sequence number; physical: clock timestamp)
+
+         - Cross-device read-after-write consistency
+
+              - Centralized user timestamp metadata for each replica knows the last user update on other replicas
+              - Route requests from all of a user's devices to the same datacenter to be handled by the same leader
+
+      - Monotonic reads
+
+         - See things backward in time
+         - Strong consistency > monotomic reads > eventual consistency
+         - Each user always reads from the same replica (chosen from hash of user id)
+
+      - Consistent prefix reads
+
+         - Reading the writes must follow the same order of the writes
+         - Different partition operates differently. No global ordering of writes
+         - Any writes that are casually related to each other are written to the same partition
+
+- Multi-leader replication
+
+   - Situations
+
+       - Multi-datacenter operation
+
+           - One leader per datacenter
+           - Less network delay, better latency
+           - Each datacenter works independently, better fault tolerance
+           - Local network within a datacenter, better network tolerance
+
+       - Clients with offline operation
+
+           - Application needs to work when it's offline
+           - One device per/is a datacenter
+
+       - Collaborative editing
+
+           - Accept multiple writes at the same time
+           - Too slow with only one replica accepts writes that uses locks
+
+   - Handling Write Conflicts
+
+       - Synchronous vs Asynchronous conflict handling
+
+           - Sync: wait for the writes to be replicated to all replicas before telling the writes are successful
+           - Single-leader replication is better
+
+       - Conflict avoidance
+
+           - Ensure all writes for a particular record to go through the same leader
+           - Sometimes not possible: one datacenter is down / user has moved a new location served by another datacenter
+
+       - Converging to a consistent state
+
+           - No ordering of writes, may be different to each datacenter
+           - All datacenters need to converge to the same final value
+           - Ways
+
+               - Give each write a unique ID, last write (highest ID) wins (LWW), prone to data loss
+               - Give each replica a unique ID, prone to data loss
+               - Merge the values together. e.g. concatenation
+               - Record the conflict within a data structure and let application code to resolve
+
+       - Custom conflict resolution logic
+
+           - User writes conflict resolution logic using application code
+           - On write: don't prompt the user, run in the backgroud
+           - On read: store the conflict at write, prompt the user on the read at the conflict
+
+   - Multi-leader replication topologies
+
+       - Communication paths along which writes are propagated from one node to another
+       - All-to-all topology
+
+           - Network delay may cause writes (write + update on the same record) to arrive at wrong orders in some replicas
+           - Version vectors: always apply the writes with the latest version
+
+       - Circular/Star topology
+
+           - One write needs to pass through several nodes to reach all replicas
+           - Tag the node identifier all the path to prevent infinite loops
+           - Less fault tolerance for node failure
+
+- Leaderless replication
+
+   - All replicas receive reads and writes
+   - Writing to the Database When a Node Is Down
+
+       - A read and write send to all replicas, version vectors to determine the latest value
+       - Read repair: update replicas with staled values at a read. Works well for frequently read values
+       - Anti-entropy process: background process constantly looking for and updating staled values
+
+   - Quorums for reading and writing
+
+       - At least `w + r > n` to expect a up-to-date read
+       - Node unavailable due to crash / full disk / network interruption ...
+
+   - Limitations of Quorum Consistency
+
+       - Set `w + r <= n`, more likely to read stale values, but lower latency and higher availability
+       - Edges cases for reading stale values even `w + r > n`
+
+           - Sloppy quorum is used
+           - Two writes occurred concurrently
+           - A write happens concurrently with a read
+           - A write overall fails, but not rolled back on the successful replicas
+           - A node carrying new values fails, and restored from replica with old values. This could break the quorum
+
+       - Better for use cases that can tolerate eventual consistency
+       - Monitoring staleness
+
+           - Metrics for replication lag
+           - Leader-based replication: writes are applied in the same order from the replication log
+           - Hard to tell from leaderless replication since no order for the writes (and no log)
+
+   - Sloppy quorum and Hinted Handoff
+
+       - When quorum doesn't meet, should we fail the write or write it to some other nodes that aren't among the n nodes
+       - When the original nodes are back, other nodes send the writes back
+       - Useful to inscrease write availability, but bring no guarantee to the reads until the hinted handoff
+       - Multi-datacenter operation
+
+           - `n` includes nodes in all datacenters, user can specify from the config file
+           - The client usually waits for ack from a quorum of nodes with the local datacenters
+           - Unaffected by the dalays and interruptions of the network
+
+           - Or, `n` describes the number of replicas within one datacenter
+           - Cross-datacenter replication (anti-entropy process) happens async in the background
+
+   - Detecting concurrent writes
+
+       - Last writes wins
+
+           - Give each write / replica a unique id. Largest ID wins
+           - Reach eventual consistency, but at the cost of data loss
+           - Some writes are reported successful to the user, but are getting replaced
+
+       - Two operations are concurrent if neither happens before the other (i.e. neither knows about the other)
+       - Version vector
+
+           - A version number per replica per key attached with the value
+           - Version vector is the collection of veriosn numbers from all the replicas
