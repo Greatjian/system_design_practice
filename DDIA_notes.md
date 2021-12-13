@@ -12,6 +12,7 @@
 **Part 2 Distributed Data**
 
 - [CP5 Replication](#CP5)
+- [CP6 Partitioning](#CP6)
 
 ## CP1
 
@@ -217,6 +218,7 @@ Storage and Retrieval
 
     - Index values are not necessarily unique
     - Map value to a list of ids / Make each value unique by appending the id
+    - Searching for occurrance of a particular value
 
 - Store values within the index
 
@@ -674,3 +676,119 @@ Replication
 
            - A version number per replica per key attached with the value
            - Version vector is the collection of veriosn numbers from all the replicas
+
+## CP6
+
+Partitioning
+
+Better scalability, larger query throughput, less latency
+
+- Partitioning Key-Value Data
+
+    - Spread the data and query load evenly across nodes (skew otherwise)
+    - Random, but not way knowing which node the record is in
+    - Partitioning by Key Range
+
+        - Easy to fetch for range scans
+        - But certain access patterns can lead to hot spots
+        - Prefix other fields in front of the key
+        - Dynamic partitioning
+
+    - Partitioning by Hash of Key
+
+        - Uniformly distribute the skewed data
+        - No need to be cryptographically strong
+        - Partitioning by key hash ranges
+        - Not good for ranged queries: adjacent keys in different partitions
+        - Fixed number of partitions/(per node)/Dynamic partitioning
+
+    - Compromise between the two above
+
+        - Compound primary key for several columns
+        - Only the first column is hashed to determine the partition
+        - Other columns are used as a cancatenated index for sorting the data
+        - Can perform ranged queries over the rest columns given a fixed value of the first column
+
+    - Skewed Workloads and Relieving Hot Spots
+
+        - Worst case: all reads and writes on the same key
+        - Add a random number to the start/end of the key
+        - But need to read data to all the keys and combine it
+        - Extra bookkeeping of the keys
+
+- Partitioning and Secondary Indexes
+
+    - Partitioning Secondary Indexes by Document
+
+        - Each partition maintains its own secondary indexes
+        - Add document ID (in this partition) to the secondary index
+        - Easy for writes to add new document under one partition
+        - Need to send the query to all partitions and combine the results
+        - Read queries are expensive, prone to latency amplification
+
+    - Partitioning Secondary Indexes by Term
+
+        - A global index that covers all partitions of documents
+        - The index term is partitioned
+        - Partitioning by the term: useful for range scans
+        - Partitioning by the hash of the term: even load distribution
+        - Reads are more efficient
+        - Writes are slower and more complicated, affect multiple partitions
+        - Write updates could be asynchronous, meaning an instant read may not be updated
+
+- Rebalancing Partitions
+
+    - More/less machines, more/less CPU/RAM (thus more/less partitions) in a node over time
+    - Moving load from one node in the cluster to another
+    - Requirements
+
+        - Evenly distributed load
+        - Continue accepting reads and writes while rebalancing
+        - No more data than necessary should be moved (faster, less network/disk IO)
+
+    - Strategies
+
+        - Hash(key) mod N. Bad since most of the keys need to move
+        - Fixed number of partitions
+
+            - Operationally simpler
+            - More data -> larger partition size
+            - High enough to acommodate future growth
+            - Hard if total size of the dataset is varaible
+
+        - Dynamic partitioning
+
+            - Limited partition size
+            - More data -> more number of partitions per node
+            - When a partition grows to exceed a configured size, it splits into two partitions
+            - But it starts with one single partion in a single node to hanle all writes while other nodes are idle
+            - Could configure to start with an intial set of partitions
+
+        - Partitioning proportionally to nodes
+
+            - Fixed number of partitions per node
+            - More data -> more nodes, but same amount of partition in a node
+            - Limited partition size
+            - Repartition needs to pick new boundaries: require hash-based partitioning
+
+    - Operations: Automatic/manual rebalancing
+
+        - Fully automated rebalancing: less operational work, but more unpredictable
+        - Only changes when the administrator explicitly configures it
+        - Fully manual
+
+- Request Routing
+
+    - How does the client know which node to connect?
+    - Allow clients to contact any node (handle/forward request)
+
+        - Gossip protocol among the nodes
+        - More complexity in the nodes, but no more coordnation service dependency
+
+    - Send the client request to a routing tier first, which determines the node, then forward the request
+
+        - Coordination service: ZooKeeper
+        - Maintain mappings of partition to nodes
+        - Notify routing tier for any mapping update
+
+    - Requires the client to be aware of the partition assignment to nodes first
