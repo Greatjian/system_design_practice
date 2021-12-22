@@ -13,6 +13,7 @@
 
 - [CP5 Replication](#CP5)
 - [CP6 Partitioning](#CP6)
+- [CP7 Transactions](#CP7)
 
 ## CP1
 
@@ -251,7 +252,7 @@ Storage and Retrieval
 
 - OLTP vs OLAP (online transaction / analytic processing)
 
-|       Property       |                        OLAP                       |                    OLTP                   |
+|       Property       |                        OLTP                       |                    OLAP                   |
 |:--------------------:|:-------------------------------------------------:|:-----------------------------------------:|
 | Main read pattern    | Small number of records per query, fetched by key | Aggregate over large number of records    |
 | Main write pattern   | Random-access, low-latency writes from user input | Bulk import (ETL) or event stream         |
@@ -792,3 +793,168 @@ Better scalability, larger query throughput, less latency
         - Notify routing tier for any mapping update
 
     - Requires the client to be aware of the partition assignment to nodes first
+
+## CP7
+
+Transactions
+
+- Intro
+
+    - Group several reads and writes together into a logical unit
+    - Simplify the programming model for applications accessing a database
+    - Higher transactional guarantee, but lower performance and availability
+    - Isolation levels: read committed, snopshot isolation, serializability
+
+- The Meaning of ACID (safety guarantees)
+
+    - Atomicity: something cannot be broken down into smaller parts
+    - Consistency: certain statements about data invariants must always be true (also rely on applications, e.g. balanced accounts)
+    - Isolation: concurrent executing transactions are isolated from each other (serializability)
+    - Durability: once a transaction is committed, its data will never be forgotten
+
+- Single-Object and Multi-Object Operations
+
+    - BEGIN TRANSACTION ... COMMIT
+    - No way for nonrelational databases to group operations together
+    - Single-object writes: log for crash recovery + lock on each object
+    - Need for multi-object transactions
+
+        - Writes to several different objects at once
+        - e.g. Foreign key reference in relational data model
+        - e.g. Updating denormalized information
+        - e.g. Database with secondary indexes
+        - Hard for error handling without transactions
+
+    - Handling errors and aborts
+
+        - Retry an aborted transaction, but not perfect ...
+        - e.g. Transaction succeeded, but fail to commit to client, so performed twice
+        - e.g. Make it worse if the error is due to overload
+        - e.g. Only worth trying transient errors
+        - e.g. More side effects during the retry
+
+- Weak Isolation levels
+
+    - Weaker levels of isolation, better performance
+    - Read committed
+
+        - No dirty reads
+
+            - Only see data has been committed when reading
+            - Locks on objects, works but bad performance since need to wait for long-running write transactions
+            - Let database remember both the old and new values (based on whether the transaction changing the value has been committed or not)
+
+        - No dirty writes
+
+            - Only overwrite data has been committed when writing
+            - Row level locks on object: hold until committed / aborted
+
+    - Snapshot Isolation
+
+        - Read committed is vulnerable to nonrepeatable reads, which can be solved by snapshot isolation
+        - Each transaction reads from a consistent snapshot of the database
+        - Database keeps several different committed version of an object (multi-version concurrency control, MVCC)
+        - Read committed uses a separate snapshot for each query, while snapshot isolation uses the same snapshot for an entire transaction
+        - Implementation: add (TxId, created_by, deleted_by) for each object value change
+        - Visibility rules for a consistent snapshot
+
+            - a: The transaction created the object had been committed
+            - b: The object is not marked for deleted, or the transaction requested the deletion has not been committed
+            - If both a and b apply, then the object is visible
+            - Summary: earlier transactions (with smaller TxId) cannot see later transaction changes, even if it happens early on some objects
+
+        - Indexes on snapshot isolation
+
+            - Have index point to all versions of an object and filter out the invisible ones to the current transaction
+            - Or, Create a new copy of each modified page, and have the parent pages till the root pages copied (Each write creates a new B-tree root)
+
+    - Preventing Lost Updates
+
+        - Discussed what a read-only transaction can see among the concurrent writes
+        - Now discuss two transactions writing concurrently (e.g. read-modify-write cycle, one modification can be lost)
+        - Solutions
+
+            - Atomic write operations: database provides atomic update operations by taking an exclusive lock on the object
+            - Explicit locking: up to the application to lock the object from the query
+            - Database automatically detecting lost updates: let them execute in parallel, and have transaction manager detected it (the check is more efficient with snapshot isolation), the abort one and force it to retry
+            - Compare-and-set: allowing an update only if the value has not changed since last read
+            - Conflict resolution and replication: allow replicated databases to have concurrent writes to create several conflicting versions of a value, and have application code or special data structures to resolve and merge the versions / Or last write wins (LWW), which is faster but prone to lost updates
+
+    - Write Skew and Phantoms
+
+        - More potential race conditions on concurrent writes
+        - Two check(read)-decide-write cycles, with write changes the decide
+        - Lock may not help since the check may not return any row
+        - Solution
+
+            - Materializing conflicts: take a phantom and turn it into a lock conflict on a concrete set of rows in the database (e.g. create a new table), but hard and error-prone to do
+            - Serializable isolation is preferrable
+
+- Serializability
+
+    - Though transactions may execute in parallel, the end result is the same as if they had executed one at a time, serially
+    - Possible techniques
+
+        - Actual Serial Execution
+
+            - Literally execute transactions in a serial order
+            - RAM becomes cheap, it's possible to have the entire dataset in memory
+            - OLTP workloads are short and involve a small number of reads and writes (which fits here)
+            - OLAP workloads are typically read only, and can run on snapshot isolation level
+            - Avoid the coordination overhead of locking
+            - Encapsulate transactions in stored procedures for less network IO (and less disk IO if the dataset can fit into memory), but...
+
+                - Each database has its own language for stored procedures, lack the library ecosystem
+                - Code running in a database (stored procedures) is difficult to manage (debug, deploy, test, monitoring)
+                - Database is more performance sensitive than application server, prone to badly written procedures
+
+            - Partitioning
+
+                - Single CPU core works for low write throughtput applications
+                - For high write throughtput, can partition the data and have its own processing thread and CPU core
+                - But have addtional coordination overhead for cross-partition transactions
+
+        - Two-Phase Locking (2PL)
+
+            - Snapshot isolation: readers never block writers, and writers never block readers
+            - 2PL: writers block readers, and vice versa
+            - Provides erializability, no race conditions and prevent lost updates
+            - Implementation
+
+                - Shared locks for reads, exclusive locks for writes
+                - Transaction holds the lock till committed / aborted
+                - Database automatically detects deadlocks, aborts one for retry
+
+            - Performance
+
+                - Worse throughtput and latency compared to weak isolation
+                - Due to overhead of acquiring and releasing locks
+                - But more on reduced concurrency for waiting for the locks
+                - Unstable lantencies and slow at higher percentiles
+                - Deadlock happens more frequently than lock-based read committed isolation
+
+            - Predicate lock to prevent phantoms
+
+                - Belongs to all objects matching the predicate (instead of a particular object)
+                - Applies even to objects that do not yet exist in the database, but might add in the future (phantom)
+                - Could be time consuming for checking matches
+                - Use index-range locking instead
+
+                    - Simplified approximation by matching a greater set of objects
+                    - Have the search condition attached to the index, and lock the index
+                    - More locked objects, but less overhead
+
+        - Serializable Snapshot Isolation (SSI)
+
+            - Pessimistic concurrency control (e.g. 2PL): wait until it's safe and continue
+            - Optimistic concurrency control (e.g. SSI): continue anyway and check whether to abort and retry during commit
+            - Bad performance for high contention (multiple transactions try to access the same object, thus many retries, contention can be reduced for commutative atomic operations (e.g. counter))
+            - Bad performance if it's closing to the maximum throughtput (retries adds more throughput)
+            - Otherwise tend to perform better than pessimistic concurrency control: no need to block wating for locks, thus predictable and less variable latency
+            - Desicion based on an outdated premises (Write Skew and Phantoms, two check(read)-decide-write cycles, with write changes the decide)
+
+                - Detecting stale MVCC reads (first uncommitted write before the second read): durng the second transaction commit checking, abort it if there are any ignored writes that have been committed
+                - Detecting writes that affect prior reads (first uncommitted write after the second read): during the first write, database notifies the transactions that have its prior read. During the notified transaction commit checking, abort it if the write transaction has been committed
+
+            - Performance tradeoff: the database keeps track of the detail of transactions vs booking keeping overhead
+            - Favor transactions with short time read-write queries, thus less abort rates
