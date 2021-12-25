@@ -14,6 +14,7 @@
 - [CP5 Replication](#CP5)
 - [CP6 Partitioning](#CP6)
 - [CP7 Transactions](#CP7)
+- [CP8 The Trouble with Distributed Systems](#CP8)
 
 ## CP1
 
@@ -224,6 +225,11 @@ Storage and Retrieval
 - Store values within the index
 
     - Clustered index: store value within the index
+
+        - The table is stored in the sort order specified by the primary key
+        - Can be either heap or index-organized storage
+        - Table in the same/sequential pages -> avoid disk random IO
+
     - Covering index: store some of a table's columns within the index
     - Non-clustered index: store references of the data within the index
 
@@ -958,3 +964,123 @@ Transactions
 
             - Performance tradeoff: the database keeps track of the detail of transactions vs booking keeping overhead
             - Favor transactions with short time read-write queries, thus less abort rates
+
+## CP8
+
+The Trouble with Distributed Systems
+
+- Faults and Partial Failures
+
+    - Single computer is deterministic -- either fully functional or entirely broken
+    - Distributed system may have parts that are broken in some unpredictable way -- nondeterministic partial failure
+    - Fault tolerant: build reliable system from unreliable components
+
+- Unreliable Networks
+
+    - Shared-nothing systems: machines connected by a network
+    - Cheap, make use of commoditized cloud computing services, achieve high reliability through redundancy
+    - Asynchronous packet networks: no guarantee when or whether it will arrive
+    - Need to define and test network error handling
+    - Usual way of handling network errors is a timeout: give up wating after some time
+
+        - Too long: long wait till declare a node is dead
+        - Too short: higher risk of incorrect declaration (e.g. temporary slow down due to spike, make it worse if it's due to high load)
+        - Most systems don't have gurantee: unbounded delays
+        - Choose timeout experimentally, or automatically adjust the timeout according to the reponse time
+
+    - Packet delays on network due to queueing
+
+        - Network switch queues the packets on a busy network link
+        - Operating system queues the packets if all the CPU cores are busy
+        - Virtual machine monitor queues the packets when operating system is paused
+        - TCP flow control queues the packets at the sender before the data enters the network
+
+    - Synchronous vs asynchronous networks
+
+        - Telephone requires reliable network: low latency and enough bandwidth
+        - Synchronous network: establish a circuit for a fixed, guaranteed amount of bandwidth allocated
+        - But not good for TCP connection, which is optimized for bursy traffic and no particular bandwidth requirement
+        - It wastes network capacity, causing slow transfer
+        - TCP dynamically adapts the rate of data transfer to the available network capacity
+        - Tradeoff of dynamic resource partitioning: latency guarantee at the cost of reduced utilization
+
+- Unreliable Clocks
+
+    - Monotonic vs Time-of-Day Clocks (physical clocks)
+
+        - Time-of-Day clock
+
+            - Synchronized with network time protocol (NTP)
+            - Ideally the same timestamp among machines
+            - But may be forcibly reset and jump back to previous time point (vary by e.g. temperature)
+            - Unsuitable for measuring elapsed time
+            - Can achieve high accuracy with GPS receivers, but requires significant effort and expertise
+
+        - Monotonic clock
+
+            - Guaranteed to always move forward, suitable for measuring a duration
+            - Absolute value is meaningless, make no sense to compare between computers
+
+    - Replying on Synchronized Clocks
+
+        - Pitfalls
+
+            - A day may not have exactly 86400s
+            - Time-of-day clocks may move backward in time
+            - Time on one node may be quite different from time on another node
+
+        - Robust software needs to be prepated to deal with incorrect clocks
+        - Logical clock based on incrementing counters is a safer alternative for ordering events
+        - Clock reading has a confidence interval
+        - Snapshot isolation needs a monotonically increasing transaction ID: uncertainty of clock accuracy if using timestamp
+
+    - Process Pauses
+
+        - How does the leader know it's still the leader: obtain a lease from other nodes and periodically renew
+        - But lease may expire during unexpected program execution pause and the leader doesn't know
+
+            - e.g. waiting for garbage collector which stops all running threads
+            - e.g. virtual machine gets suspected and resumed later
+            - e.g. operating system context-switches to another thread / virtual machine
+            - e.g. synchronous disk IO wait
+
+        - Response time guarantee
+
+            - Deadline by which the software must respond
+            - Sum all the worst-case execution times
+            - Enormous testing and measurement must be done
+            - Simply not economical and appropriate
+
+- Knowledge, Truth, and Lies
+
+    - The Truth is Defined by the Majority
+
+        - A node cannot necessarily trust its own judgement of a situation (e.g. declaring nodes dead)
+        - Many distributed algorithms rely on a quorum (voting among the nodes)
+        - The leader and the lock (can only hold by one node): a node believes it's the chosen one doesn't mean the quorum agrees
+        - Protect with feasing tokens: returned by the system and will be checked later during execution
+
+    - Byzantine Faults
+
+        - A node may be malfunctioning and not obeying the protocal
+        - Safely assume the system doesn't have such fault
+        - Most Byzantine fault-tolerant algorithm require a supermajority of over 2/3 of the nodes to be functioning correctly
+        - Weak forms of lying: invalid message due to hardware issues, software bugs and misconfiguration
+
+    - System Model and Reality
+
+        - System model is an abstraction describes what things an algorithm may assume
+
+            - Synchronous model: bounded network delay, process pauses, clock error (not realistic)
+            - Partially synchronized model: behave like a synchronous model most of the time, but sometimes exceed (realistic)
+            - Asynchronous model: No timing consumption (no clocks)
+
+        - System models for node failures
+
+            - Crash-stop faults: node can only fail by crashing (no response -> dead)
+            - Crash-recovery faults: node may crash, or starting responding after some time
+            - Byzanetine (arbitrary) faults: node may do anything, even try to trick and deceive other nodes
+
+        - Real system: partially synchronized model with crash-recovery faults
+        - Safety: nothing bad happens (uniqueness, monotonic sequence)
+        - Liveness: Something good eventually happens (availability)
