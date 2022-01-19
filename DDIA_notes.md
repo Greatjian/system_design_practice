@@ -15,6 +15,7 @@
 - [CP6 Partitioning](#CP6)
 - [CP7 Transactions](#CP7)
 - [CP8 The Trouble with Distributed Systems](#CP8)
+- [CP9 Consistency and Consensus](#CP9)
 
 ## CP1
 
@@ -1084,3 +1085,174 @@ The Trouble with Distributed Systems
         - Real system: partially synchronized model with crash-recovery faults
         - Safety: nothing bad happens (uniqueness, monotonic sequence)
         - Liveness: Something good eventually happens (availability)
+
+## CP9
+
+Consistency and Consensus
+
+The best way to build fault-tolerant systems is to find some general-purpose
+abstractions with useful guarantees
+
+The most important abstractions for distributed system is consensus:
+getting all of the nodes to agree on something
+
+- Consistency Guarantees
+
+    - Weak guarantee: eventually conssitency
+    - Stronger consistency models
+
+        - Worse performance, less fault-tolerant
+        - But easier to use correctly
+
+    - Transaction isolation levels: avoiding race conditions due to concurrently executing transactions
+    - Distributed consistency: coordinating the state of replicas in the face of delays and faults
+
+- Linearizability
+
+    - Make a system appear as if there were only one copy of the data
+    - In a linearizable system we imagine there must be some point in time where the write happens, and all subsequent reads must return the new value
+    - Linearizability vs serializability
+
+        - Serializability is an isolation property of transactions
+        - It guarantees that the transactions behave like they are executed in some serial order
+        - Linearizability is a recency guarantee (新鲜度保证) on reads and writes of a register / object
+        - Implementations of serializability based on 2PL or actual serial execution are typically linearizable
+        - Serializable snapshot isolation is not linearizable since it reads from a consistent snapshot, which doesn't include more recent writes
+
+    - Relying on Linearizability (as an important requirement for system to work correctly)
+
+        - Locking and leader election in coordnation service (ZooKeeper, etcd)
+        - Uniqueness constraints (primary key)
+        - Cross-channel timing dependencies (could potentially detect the Linearizability violation)
+
+    - Implementing Linearizable Systems
+
+        - Really only use a single copy of the data (but not fault-tolerant)
+        - Single-leader replication with synchronously updated followers are linearizable
+        - Consensus algorithms are linearizable (see below)
+        - Multi-leader / leaderless replication is not linearizable
+
+    - The Cost of Linearizability
+
+        - CAP theorem: applications that don't require linearizability can be more tolerant of network problems (either consistent or available when partitioned)
+        - i.e. disconnected replicas cannot process requests if the application requires linearizability
+
+- Ordering Guarantees
+
+    - Operations are executed in some well-defined order
+    - Ordering and Causality
+
+        - Orders help preserve causality (因果关系): causes come before effect
+        - Snapshot isolation provides casual consistency
+        - Linearizable system has a total order of operations (no concurrent operations)
+        - In a causally consistent system, two events are ordered if they are casually related. Concurrent events are incomparable (in different branches)
+        - Linearizability implies causality
+        - Casual consistency is the strongest possible consistency model that doesn't slow down due to network delays
+        - Ordered (casually related) operations must be processed in that order on every replica
+        - The system needs to track casual dependencies across the entire database (not a single key), can be achieved by generalized version vectors
+
+    - Sequence Number Ordering
+
+        - Tracking all casual dependencies has a large overhead
+        - Instead, can use sequence numbers / timestamps (e.g. a logical clock) to order events
+        - The generated sequence numbers must be consistent with causality: lamport timestamp
+        - A pair of (counter, node ID)
+        - Every node / client keeps tracks of the maximum counter it has seen so far. It increases that maximum counter by 1 during its new request / response
+        - Casual dependency results in an increased timestamp
+        - But timestamp ordering is not sufficient in practice: you have to check all other nodes for the operations to determine the order
+
+    - Total Order Broadcast
+
+        - A protocol for exchanging messages between nodes
+        - Two safety properties
+
+            - Reliable delivery: no message is lost. A message is delivered to all nodes if it's delivered to one node
+            - Total ordered delivery: Messages are delivered to every node in the same order
+
+        - Using total order broadcast: database replication, implement serializable transactions, creating logs (replication / transaction log)
+        - Implementing linearizable storage using total order broadcast
+
+            - Write: append a message to the log, read the log and wait for your appended message, check if the first occurrence of the request is yours
+            - Read (could be stale if the store is asynchronously updated from the log) options:
+
+                - Append the read message to the log, read the log and perform the actual read when the message is delivered to you
+                - Or, fetch the position of the latest log message, perform the read when that message is delivered to you
+                - Or, read from a replica that is synchronously updated on writes
+
+        - Implementing total order broadcast using linearizable storage
+
+            - Assume the storage has an atomic increment-and-get operation
+            - Use the operation for a linearizable integer and attach it to message as the sequence number
+            - Every node reads the messages with sequence numbers increasing 1 at a time
+
+        - Linearizable compare-and-set / increment-and-get operation and total order broadcast are both equivalent to consensus
+
+- Distributed Transactions and Consensus
+
+    - Consensus: getting several nodes to agree on something (e.g. leader election, atomic commit)
+    - Atomic Commit and Two-Phase Commit (2PC)
+
+        - Atomic commit: all nodes agree on either commit or abort
+        - Single node transaction commit: decide at the moment disk finishing writing the commit record
+        - Multi-node transaction commit
+
+            - A node must only commit once it's certain that all other nodes in the transaction are going to commit
+            - A transaction commit is irrevocable
+            - Achieved by two-phase commit (2PC)
+
+        - Two-phase commit
+
+            - Coordinator / transaction manager: a library within the same process that is requesting the transaction
+            - two phases: prepare and commit
+
+                - When application is ready to commit, the coordinator sends a prepare request to all nodes, asking them whether they want to commit
+                - The coordinator sends the commit request iff all nodes reply yes, otherwise abort request is sent
+                - The coordinator must send the decision (commit / abort) to all nodes (retry forever until it succeeds)
+
+            - Commit point: coordinator writes the desicion (commit / abort) to the transaction log after receiving all the node replies, and before sending the decision to all the nodes
+            - Coordinator failure: must wait for it to recover to complete the 2PC
+            - Three-phase commit
+
+                - Nonblocking atomic commit protocal that don't get stuck if the coordinator crashes
+                - It assumes a network with bounded delay and nodes with bounded response time
+                - Thus have a perfect failure detector (to tell whether a node has crashed)
+
+    - Distributed Transactions in Practice
+
+        - Tradeoff: provide an important safety guarantee vs bad performance and cause operational problems
+        - Work well for database-internal distributed transactions (all nodes run the same database software)
+        - Could be challenging for heterogeneous distributed transactions (allow diverse systems to be integrated)
+        - Holding locks while in doubt, but could lead to lock being held forever (e.g. if the coordinator crashes)
+        - Recover from coordinator failure
+
+            - Orphaned in-doubt transactions cannot be resolved automatically
+            - Only for an administrator to manually decide whether to commit or rollback
+
+    - Fault-Tolerant Consensus
+
+        - Everyone decides on the same outcome, and once you have decided, you cannot change your mind
+        - Even if some nodes fail, the other nodes must still reach a decision
+        - Requires a majority of the nodes are functioning correctly to safely form a quorum
+        - Consensus algorithms
+
+            - Decide on a sequence of values
+            - Equivalent to total order broadcast (decide on each round the next message to deliver)
+
+        - Limitations of consensus
+
+            - Nodes voting uses synchronous replication, causing bad performance
+            - Consensus system requires a strict majority to operate. It's blocked when network failure happens
+            - Most consensus algorithm assumes a fixed set of nodes to participate the voting. Hard to add or remove nodes in the cluster
+            - Consensus systems generally replies on timeouts to detect failed nodes. The could be wrong guesses and cause bad performance
+            - Consensus algorithm is sensitive to network problems
+
+    - Membership and Coordination Services
+
+        - ZooKeeper and etcd: distributed key-value stores
+        - Designed to hold small data that can fit entirely into memory
+        - Data is replicated to all nodes using a fault-tolerant total order broadcast algorithm
+        - Useful use cases
+
+            - Allocating work to nodes: choose leader, assign resource partition to nodes
+            - Service discovery: find out IP address to reach a particular service (as a service registry)
+            - Membership service: determine which nodes are active and live members of a cluster
