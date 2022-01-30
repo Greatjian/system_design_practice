@@ -17,6 +17,10 @@
 - [CP8 The Trouble with Distributed Systems](#CP8)
 - [CP9 Consistency and Consensus](#CP9)
 
+**Part 3 Derived Data**
+
+- [CP10 Batch Processing](#CP10)
+
 ## CP1
 
 Reliable, Scalable, and Maintainable Applications
@@ -1256,3 +1260,225 @@ getting all of the nodes to agree on something
             - Allocating work to nodes: choose leader, assign resource partition to nodes
             - Service discovery: find out IP address to reach a particular service (as a service registry)
             - Membership service: determine which nodes are active and live members of a cluster
+
+# Part 3 Derived Data
+
+Systems taht store and process data
+
+- System of record
+
+    - Source of truth,hold authoritative version of data
+    - Data is typically normalized
+
+- Derived data systems
+
+    - Take existing data and tranform / process it in some ways
+    - Data is denormalized (values, indexes, materialized views)
+    - Redundancy / deplication can have better performance
+
+## CP10
+
+Batch Processing
+
+- Three Types of Systems
+
+    - Service (online systems)
+
+        - Response time is usually the promary measure of performance of a service
+        - Availability is important
+
+    - Batch processing system (offline system)
+
+        - Take a large amount of data, run a job to process it and produce some output data
+        - Job takes a while to run, often scheduled periodically
+        - Throughput is the primary performance measure
+
+    - Stream processing system
+
+        - Between online and offline system
+        - Stream job operates on events shortly after they happen (whereas a batch job operates on fixed-sized input)
+        - Have lower latency than equivalent batch systems
+
+- Batch Processing with Unix Tools
+
+    - Simple Log Analysis
+
+        - Small data: in-memory hash table
+        - Large data: sort (make efficient use of disk)
+
+    - The Unix Philosopy
+
+        - A uniform interface
+
+            - All programs use the same input / output interface (e.g. file)
+            - The output of one program becomes the input of another progress
+
+        - Separation of logic and wiring (loose coupling of programs)
+        - Transparency and experimentation: make it easy to see what's going on (e.g. immutatble inputs)
+        - Biggest limitation: only run on a single machine
+
+- MapReduce and Distributed Filesystems
+
+    - MapReduce jobs read and write files on a distributed filesystem (e.g. HDFS for Hadoop)
+    - HDFS consists of a daemon process running on each machine, exposing a network service that allow other nodes to access its stored files
+    - Replicated file blocks on multiple machines to tolerate machine and disk failure
+    - MapReduce Job Execution
+
+        - Mapper: extract key and values from input records
+        - Reducer: takes the key-value pairs from the mapper, and produce output records grouping the same key
+        - Distributed: both on mapper (on each database) and reducer (same key ends up on the same partitioned reducer)
+
+    - MapReduce workflow
+
+        - Chain MapReduces jobs together into a workflow
+        - Output of a job becomes the input of the next job
+        - Prior job must finish before the next job starts
+        - Need workflow scheduler to handle job execution dependencies
+
+    - Reduce-Side Joins and Grouping
+
+        - Sort-merge joins
+
+            - The mapper output is sorted by key (and database of records, secondary sort)
+            - The reducer can directly merge records together
+
+        - Group By
+
+            - Used in aggregations
+            - Set up the mapper so that the key in the key-value pair is the grouping key
+
+        - Handling skew (hot keys / spots)
+
+            - Spreading the work over several reducers (and another reducer in the next stage to group them all)
+            - The cost is to replicate the other join inputs to multiple reducers
+            - Or, user species the hot keys, which will be handled by mapper-side joins
+
+    - Map-Side joins
+
+        - Broadcast hash join
+
+            - A large dataset joins a smaller one, which can fit into memory
+            - Build in-memory hash table
+            - Or store it in a read-only index on local disk, and the index can be cached in the os pages (no need to fit in memory in this case)
+
+        - Partitioned hash join
+
+            - All the inputs are partitioned in the same way
+            - Records with the same key end up in the same partition
+            - Sufficient for each mapper to read one partition of the data (not all)
+
+        - Map-side merge joins
+
+            - All the inputs and partitioned in the same way, and also sorted base on the same key
+            - Mapper can do the merging part by reading files sequentially and matching records with the same key
+
+        - MapReduce workflows with map-side joins
+
+            - Map-side joins make more assumptions about the size, sorting, partitioning of the input datasets
+            - Knowing the physical layout of the datasets is important for optimizing join strategies
+
+    - The Output of Batch Workflows
+
+        - Neither OLTP (scans a larger portion of data), nor OLAP (output is a data structure not a report)
+        - Use cases of batch processing
+
+            - Building search indexes
+            - Key value stores (machine learning systems, e.g. classifier)
+
+        - Philosophy of batch process outputs
+
+            - Input is immutable to avoid side effects
+            - Easy to rollback, backwards compatible, better feature development and maintainance
+            - Automatic rescheduling in case of failure
+            - Separation of wiring (decoupling on each stage)
+
+    - Comparing Hadoop to Distributed Databases
+
+        - Diversity of storage
+
+            - Hadoop indiscriminates dumping data into HDFS, later figuring out how to process it
+            - This shifts the burden of intepreting data to the consumer
+            - By contrast, massive parallel processing (MPP) database requires careful up-front modeling of data and query pattern
+            - This slows down the centralized data collection process
+
+        - Design of processing models
+
+            - MPP databases are monolithic, tightly integrated pieces of software that handles storage layout on disk, query planning, scheduling and execution
+            - Hadoop can be built as a SQL query execution engine, or other types (e.g. machine learning system)
+
+        - Designing for frequent faults
+
+            - MPP databases abort the entire query if a node crash
+            - Hadoop can tolerate the failure of MapReduce job failure by retrying the failed task
+            - Hadoop also eager to write data to disk
+
+                - This may good for fault tolerance, but incurs significant overheads
+                - In Google, MapReduce workflows are more likely to retry if getting preempted by higher priority resources
+                - This model achieves better resource utilization and greater efficiency at the cost of failure rate
+
+- Beyond MapReduce
+
+    - Intro of MapReduce
+
+        - MapReduce is a fairly clear and simple abstraction on top of a distributed filesystem
+        - Easy to understand but not easy to use -> higher-level programming models are built on top of it
+        - Poor performance for some kinds of processing
+        - Alternatives exist
+
+    - Materialization of Intermediate State
+
+        - Intermediate state: a means of passing data from one job to next
+        - Materialization: write out the intermediate state to files
+        - Downsides of MapReduce fully materializing intermediate state
+
+            - A new job can start only if all its preceding jobs have finished (not pre-consume the input as soon as it's produced)
+            - Mappers are often redundant
+            - The state is replicated across several nodes
+
+        - Dataflow engines (e.g. Spark, Tez, Flink)
+
+            - Handle the entire workflow as one job, consisting of operators
+            - Operators are more flexible than mappers and reducers
+
+                - Sorting is performed only if actually required
+                - No unnecessary map tasks
+                - The scheduler has an overview of the pipeline so that it can make locality optimizations
+                - May only need to keep the intermediate state in memory / local disk
+                - Operators can start as soon as its input is ready
+
+            - Some avoid writing intemediate state to HDFS
+
+                - Recompute the data from others that are still available
+                - The computation needs to be deterministic
+                - May not be a good idea if the intermediate data is small or the recomputation is very CPU-intensive
+
+    - Graphs and Iterative Processing
+
+        - Goal is to have an offline processing / analysis on an entire graph
+        - MapReduce uses an inefficient iterative style
+
+            - The scheduler checks the finish condition on every run
+            - It will always reads the entire dataset on every run, even if it only changes a small portion
+
+        - The Pregel processing model
+
+            - Bulk synchronous parallel (BSP) model
+            - A vertex remembers its state in memory from one iteration to next
+            - Function only needs to process new incoming messages (causing the state change)
+            - The only waiting is between iterations (for all messages to be delivered)
+            - Acheving fault tolerance: periodically check the states of all vertices at the end of an iteration (e.g. write to disk so that it can rollback in case of a crash)
+            - Parallel execution: cross-machine communication is unavoidable since it's hard to partition the vertices, leading to more overhead than a single machine
+
+    - High-Level APIs and Languages
+
+        - Pig, Hive, Cascading, Crunch
+        - Less laborious
+        - Able to move the new dataflow engine without the need to rewrite job code
+        - Allow interactive use (write analysis code to observe)
+        - More productive for humans and improve job execution efficiency
+        - Incorporating declarative aspects to high-level APIs
+
+            - e.g. specifies joins in a declarative way (relational operator)
+            - The query optimizer decides how they can best be executed
+            - Or use column-oriented storage layout for filters
+            - Built into a large ecosystem of libraries (e.g. parsing, data analysis, numerical algorithm)
