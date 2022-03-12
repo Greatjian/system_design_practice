@@ -21,6 +21,7 @@
 
 - [CP10 Batch Processing](#CP10)
 - [CP11 Stream Processing](#CP11)
+- [CP12 The Future of Data Systems](#CP12)
 
 ## CP1
 
@@ -1809,3 +1810,359 @@ Stream Processing
               - Can keep the state as remote database
               - Or, keep the state local to the stream processor, and replicate it periodically
               - Or some cases, it can be rebuilt from the input stream / log-compacted change stream
+
+## CP12
+
+The Future of Data Systems
+
+- Data Integration
+
+    - The most appropriate choice of software tools (database) depends on circumstances (usage pattern)
+    - Also, data is used in several different ways
+    - Combining Specialized Tools by Deriving Data
+
+        - Reasoning about dataflows: clear about the inputs and outputs
+        - Derived data vs distributed transaction
+
+            - Distributed transaction: decide ordering of writes with mutex locks; ensure changes take effect exactly once with atomic commit; provide linearizable guarantee (e.g. reading own writes)
+            - Derived data: CDC and event sourcing use logs for ordering; ensure changes take effect exactly once with deterministic retry and idempotence; no same guarantee with asynchronous updates
+
+        - The limits of total ordering: total order of events == total order broadcast == consensus (most algorithms are designed for single node, multiple nodes under open research)
+
+        - Ordering events to capture causality: events order matters when they are causally related
+
+    - Batch and Stream Processing
+
+        - Goal of data integration: make sure that data ends up in the right form in all the right places
+        - Batch and stream processors are the tolls for achieving this goal
+        - Maintaining derived state
+
+            - Batch processing: encourage deterministic, pure functions, treating inputs as immutable and outputs as append-only
+            - Stream processing: extend operators to allow managed, fault tolerant state
+            - Asynchrony makes the system based on log robust: allow a fault in one part to be contained locally. Distributed transaction fails all if one participant fails
+            - Cross-partition communication (e.g. secondary index) is more reliable and scalable if the index is maintained asynchronously
+
+        - Reprocessing data for application evolution
+
+            - Provide a good mechanism for maintaining a system, evolving it to support new features and changed requirements
+            - Restructure a dataset into a completely different model in order to better serve new requirements
+            - Derived views allow gradual evolution, which is easily reversible if something goes wrong
+
+        - The lambda architecture
+
+            - Combine the batch and stream processing (fast approximate vs slow exact)
+            - The stream processor comsumes the events and quickly produces an approximate update to the view
+            - The batch process later consumes the same set of events and produces a corrected version of the derived view
+            - Practical problems
+
+                - Significant additional effort
+                - Merging two results could be hard if the data / number of operators is large
+                - Doing so frequently is expensive on large datasets
+
+        - Unifying batch and stream processing
+
+            - Require the following features
+
+                - The ability to replay historical events through the same processing engine that handles the stream of recent events
+                - Exactly-once semantics for stream processors
+                - Tools for windowing by event time, not processing time
+
+- Unbundling Databases
+
+    - Abstract level: database / operating system stores data, and allows you to process and query that data
+    - Treat information management differently
+
+        - Unix: logical but fairly low-level hardware abstraction
+        - Relational database: high level obstraction that hide the complexities of data structure on disk, concurrency, crash recovery ...
+
+    - Composing Data Storage Technologies
+
+        - Parallels between the features built into databases and the derived data systems
+        - Creating an index
+
+            - Setting up a new follower replica / bootstrapping change data capture in a streaming system
+            - Reprocess the existing dataset and derives the index as a new view onto the existing data
+
+        - The meta-database of everything
+
+            - Dataflow looks like one huge database (e.g. batch / stream / ETL keeps the indexes or materialized views up to date)
+            - Two avenues by which different storage and processing tools composed into a cohesive system
+
+                - Federated databases: unifying reads (easy to address read-only querying across different systems)
+                - Unbundled databases: unifying writes (synchronize writes across disparate technologies)
+
+        - Make unbundling work
+
+            - Federated read-only querying requires mapping one data model into another (manageable)
+            - Synchronizing writes requires distributed transaction across heterogeneous storage systems (wrong solution, lack of standardized transaction protocal)
+            - Asynchronous event log with idempotence writes is a much more robust and practical approach (loose coupling between the various components with log-based integration)
+
+                - System level: robust to outage or performance degradation of individual components
+                - Human level: allow different software components and services to be developed, improved, and maintained independently by different teams. Event logs provide an interface to capture consistency and are applicable to almost any data
+
+        - Unbundled vs integrated system
+
+            - The goal of unbundling is not to compete with individual databases on performance for particular workloads
+            - The goal is to allow you to combine several different databases in order to achieve good performance for a much wider range of workloads than is possible with a single piece of software
+            - It's about breadth, not depth
+
+        - What is missing
+
+            - Unbundled-database equivalent of the Unix shell
+            - High level language for composing storage and processing systems in a simple and declarative way
+
+    - Designing Applications Around Dataflow
+
+        - When a record in a database changes, we want any index / materialized view related to that record also updated
+        - Application code as a derivation function (triggers, stored procedures, UDFs)
+        - Separation of application code and state
+
+            - It make sense to have some parts of a system that specialize in durable data storage, and other parts that specialize in running application code
+            - The two can interact while still remaining independent
+            - Cannot subscribe to changes in a mutable variable in a database, can only read it periodically
+
+        - Dataflow: interplay between state changes and application code
+
+            - Unbundling the database: take the derived datasets outside the primary database
+            - e.g. caches, full-text search indexes, machine learning and analytic systems
+            - Use stream processing and message systems for this purpose
+            - Maintaining the derived data is not the same as asynchronous job execution
+
+                - The order of the state changes is often important (many message brokers don't have this property)
+                - Fault tolerance is essential for derived data (message delivery and status updates must be reliable)
+
+            - Modern stream processors can provide these ordering and reliable guarantees at scale
+
+        - Stream processors and services
+
+            - Application development: break down the functionality into a set of services that communicate via synchronous network requests: organizational scalability with loose coupling
+            - Similar to composing stream operators into dataflow systems: one-directional, asynchronous message streams
+            - Better fault tolerance
+            - Better performance: replace synchronous network request to another service with aquery to a local database
+
+    - Observing Derived State
+
+        - Dataflow system gives you a process for creating derived datasets and keeping them up-tp-date
+        - This is the write path
+        - Read path: query it again at a later time
+        - The derived state is the place that the write path and the read path meet
+        - It represents a trade-off between the amount of work that needs to be done at write time vs read time
+        - Materialized views, indexes and caching: they shift the boundary between the read path and the write path (more work on the write path by precomputing result to save efforts on the read path)
+        - Stateful, offline-capable clients
+
+            - Do as much as possible using local database without requiring network connection
+            - Sync with remote servers on the background when network connection is available
+            - Think of the device state as a cache of the server state
+
+        - Pushing state changes to clients
+
+            - The browser is a stale cache of the web page unless you poll for changes
+            - Or, the server can actively push messages to the browser as long as it remains connected
+            - Or, read for initial states, and rely on a stream of state changes thereafter
+            - If offline, it can catch up with consumer offsets from log-based message brokers later
+
+        - End-to-end event streams
+
+            - Recent tools (e.g. React) already manage internal client-side state by subscribing to a stram of events from server responses
+            - It's natural to allow servers to push state-change events to client-side pipeline
+            - This would form the end-to-end write path for state changes
+            - The challenge is the current model of stateless client + request/response interaction with databases
+            - Databases support read/write operations but not the ability to subscribe to changes
+            - Rethink the way to build the system: request/response interaction -> publish/subscribe dataflow
+
+        - Reads are events too
+
+            - Writes go through the event log, reads directly go through the datastore being queried
+            - But it's also possible to represent read requests as a stream of events
+            - Recording a log of read events
+
+                - Good to track casual dependency and data provenance across a system
+                - But incur additional storage and I/O cost
+
+        - Multi-partition data processing
+
+            - No need to collection a stream for a single partition queries
+            - It's possible for distributed execution of complex quries that need to combine data from several partitions
+            - It takes the advantage of message routing, partitioning, and joining that is already supported by stream processors
+
+- Aiming for Correctness
+
+    - We want to build applications that are reliable and correct
+    - Transactional properties of atomicity, isolation, and durability
+    - Simpler if the system can tolerate occational corrupting or losing data
+    - Stronger assurance of correctness (serializability and atomic commit)
+    - The cost is that they only work in a single datacenter (limit the scale and fault-tolerance properties)
+    - The End-to-End Argument for Databases
+
+        - Exactly-once execution of an operation
+
+            - Exactly-once / effectively-once semantic
+            - Processing twice is a form of data corruption
+            - Make the operation idempotent: need to maintain additional metadata
+            - Ensure fensing when failing over from one node to another
+
+        - Duplicate suppression: only work within the context of a single TCP connection
+        - Uniquely identifying requests
+
+            - Not sufficient to rely just on a transaction mechanism from the database
+            - Need to consider the end-to-end flow of the request
+            - A unique identifier passed all the way from the end-user client to the database
+
+        - The end-to-end argument
+
+            - Also apply to checking the integrity of the data
+            - Cannot detect corruption due to bugs in the software
+            - The lower level features (e.f. TCP duplicate suppression) are still useful, since they reduce the probability of problems at higher levels
+
+        - Applying end-to-end thinking in data systems
+
+            - Explore fault-tolerance abstractions that make it easy to provide application-specific end-to-end correctness properties
+            - Also maintain good performance and good operational characteristics in a large-scale distributed environment
+
+    - Enforcing Constraints
+
+        - Uniqueness constraints require consensus
+
+            - Make a single node the leader, and put it in charge of making all the decisions
+            - Can be scaled out by partitioning based on the value needs to be unique (all requests with the same id are routed to the same partition)
+            - Not good for multi-master replication: different masters concurrently accept conflicting writes
+
+        - Uniqueness in log-based messaging
+
+            - Log ensures all consumers see messages in the same order
+            - A stream processor consumes all the messages in a log partition sequentially, and the log is partitioned based on the unique value
+            - Any writes that may conflict are routed to the same partition and processed sequentially
+
+        - Multi-partition request processing
+
+            - Ensure an operation is executed atomically, while satisfying constraints when several partitions (tables) are involved
+            - Atomic commit across all partitions in required in the tranditional database approach, throughput is likely suffer
+            - Equicalent for partitioned logs (Log the request in a single message, as single-object writes are atomic)
+
+                - Client sends the request with an unique id
+                - A stream processor reads the log of requests, and include the request id in all its output streams
+                - Further processors comsume the stream and apply the change, deduplicate by the request id
+
+    - Timeliness and Integrity
+
+        - The correctness of the uniqueness check does not depend on whether is sender of the message waits for the outcome (sync/async)
+        - The waiting only has the purpose of synchronously informing the sender whether the uniqueness check succeeded
+        - Consistency
+
+            - Timeliness: ensuring the users observe the system in an up-to-date state (temporary inconsistency, eventual conssitency)
+            - Integrity: the absence of corruption (e.g. no data loss, no contradictory or false data), permanent inconsistency, explicit checking and repair is needed
+
+        - In most applications, integrity is much more important than timeliness
+        - Correctness of dataflow system
+
+            - ACID transactions provide both timeliness (linearizability) and integrity (atomic commit) guarantees
+            - Event-based dataflow system decouple timeliness and integrity
+            - Exactly-once / effectively-once semantics (fault-tolerant message delivery and deplicate suppression (e.g. idempotent operations) mechanism for oreserving integrity)
+            - Last example
+
+                - Represent write operation as a single message to be atomic
+                - Derive all other state updates from that single message using deterministic derivation functions
+                - Pass a client-generated id through all levels of processing for end-to-end duplicate suppression
+                - Make messages immutable and allow derived data to be reprocessed from time to time, for it easier to recover from bugs
+
+        - Loosely interpreted constraints
+
+            - Enforcing a uniqueness constraint requires consensus, typically implemented by funneling all events in a particular partition through a single node
+            - Many application can get away with much weak notion of uniqueness
+
+                - Compensating transaction: change to correct a mistake
+                - Making appology
+                - Expected as part of the business (e.g. airline overbook)
+                - Other higher level, easy to achieve constraint (e.g. bank withdrawal limit per day)
+
+            - The tranditional model of checking all constraints before writing the data is unneccessarily restrictive
+            - A reasonable choice is to write optimistically, and to check the constraint after the fact
+            - These applications do require integrity, but don't require timeliness on the enforcement of the constraints
+
+        - Coordination-avoiding data systems
+
+            - Two observations
+
+                - Dataflow systems can maintain integrity guarantees on derived data without atomic commit, linearizability, or synchronous cross-partition coordination
+                - Although strict uniqueness constraints require timeliness and coordination, many applications are actually fine with loose constraints that may be temporarily violated and fixed up later, as long as integrity is preserved throughout
+
+            - Dataflow system can provide data management service without requiring coordination, while still giving strong integrity guarantees
+            - Such coordination-avoiding data systems can achieve better performance and fault tolerance than systems that need to perform synchronous coordination
+            - Tradeoff between coordination and constriants: inconsistencies (appologies to make) vs availability problems (performance)
+
+    - Trust, but Verify
+
+        - Previous assumption: certain things might go wrong, but other things won't
+        - Process can crash, machines can suddenly lose power, and network can arbitrarily delay or drop messages
+        - Data written to disk won't lost, data in memory won't corrupt, multiplication instruction of CPU always returns the correct result (hardware issues)
+        - Maintaining integrity in the face of software bugs
+        - Don't just blindly trust what they promise
+
+            - Data corruption is sooner or later
+            - Auditing: checking the integrity of data
+            - Mature system tend to consider the possibility of unlikely things going wrong, and manage that risk
+
+        - A culture of verification: seeing more self-validating / auditing systems that continually check their own integrity, rather than relying on blind trust
+        - Designing for auditability
+
+            - Transaction can mutate several values in a databse, hard to audit
+            - Event-based system provides better auditability
+            - Resulting state updates are derived from single immutable events, which can be made deterministic and repeatable
+            - Make data provenance clearer, easy to rerun and debug
+
+        - The end-to-end argument again: checking the integrity of data systems is best done in an end-to-end fashion
+        - Tools for auditable data systems
+
+            - Like cryptocurrency and blockchain system
+            - The replica continually check each other's integrity and use a consensus protocal to agree on the transactions that should be executed
+
+- Doing the Right Thing
+
+    - Aware of the consequences: the ethical responsibility
+    - Predictive Analytics
+
+        - Bias and discrimination
+
+            - The patterns learnt by the system could be opaque
+            - If there is a systematic bias in the input data, the system could learn and amplify the bias in its output
+
+        - Responsibility and accountability
+
+            - Automated decision making opens the question of responsibility and accountability
+            - It's harder to understand how a particular decision is made and whether it's been treated in an unfair or discriminated way
+            - Much data is statistical in nature, individual cases could be wrong even if the whole probability distribution is correct
+
+        - Feedback loops
+
+            - Recommendation system: people end up seeing opinions they already agree with
+            - Breed stereotypes, misinformation and polarization
+            - Things get worse in self-reinforcing feedback loops
+
+    - Privacy and Tracking
+
+        - Ethical problems in data collection itself
+        - For application systems, sometimes the advertisers are the actual customers, and users' interest take the second place (marketing purpose)
+        - Surveillance: examine the data collection whether it's surveillance to help understand the relationship with the data collector
+        - Consent and freedom of choice
+
+            - Without understanding what happens to the data, users cannot give meaningful consent
+            - Data is extracted from users through a one way process, not a relationship with true reciprocity
+
+        - Privacy and use of data
+
+            - Having privacy does not mean keeping everything secret
+            - It means having the freedom to choose which things to reveal to whom, what to make public, and what to keep secret
+
+        - Data assets and power: if targeted adcertising is what pays for a service, then behavioral data about people is the service's core asset
+        - Remembering the Industrial Revolution
+
+            - The Industrial Revolution came about through major technological and agricultural advances: economical growth and improvements of living standard
+            - It also come with major problems: air and water pollution, establishment of social classes causing powerty of some groups
+            - It takes long time before safeguards were established (e.g. environmental protection regulations, safety protocals for workplace, outlawing child labors, health inspection for food)
+            - For the information age, the collection and use of data is one of the problems
+
+        - Legislation and self-regulation
+
+            - Data protection laws might be able to help preserve individuals' rights
+            - We need a cultural shift in the tech industry with regard to personal data
+            - We should allow each individual to maintain their privacy (i.e. their control over own data)
