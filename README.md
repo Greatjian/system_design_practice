@@ -38,8 +38,9 @@ We are now embraced with the information era. When you search for `system design
 
 Gradually updated. Keep posted!
 
-- [DDIA](/DDIA_notes.md) ![100%](https://progress-bar.dev/100)
-- [Grokking the System Design Interview](/Grokking_notes.md) ![0%](https://progress-bar.dev/0)
-- [Post and video summary](/Summary_notes.md) ![0%](https://progress-bar.dev/0)
+- [DDIA](/DDIA_notes.md) ![100%](https://progress-bar.xyz/100)
+- [Grokking the System Design Interview](/Grokking_notes.md) ![0%](https://progress-bar.xyz/0)
+- [Post and video summary](/Summary_notes.md) ![0%](https://progress-bar.xyz/0)
+- [Data Engineering Specialization from Coursera](/data_engineering_coursera.md) ![100%](https://progress-bar.xyz/100)
 
 Happy system design!
