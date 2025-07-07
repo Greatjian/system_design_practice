@@ -39,8 +39,11 @@ We are now embraced with the information era. When you search for `system design
 Gradually updated. Keep posted!
 
 - [DDIA](/DDIA_notes.md) ![100%](https://progress-bar.xyz/100)
-- [Grokking the System Design Interview](/Grokking_notes.md) ![0%](https://progress-bar.xyz/0)
-- [Post and video summary](/Summary_notes.md) ![0%](https://progress-bar.xyz/0)
 - [Data Engineering Specialization from Coursera](/data_engineering_coursera.md) ![100%](https://progress-bar.xyz/100)
+- [Case Study](/case_study/index.md)
+
+    - [Grokking the System Design Interview](https://www.educative.io/courses/grokking-the-system-design-interview/getting-ready-for-the-system-design-interview)
+    - [Hello Interview](https://www.hellointerview.com/learn/system-design/in-a-hurry/introduction)
+    - [System Design Interview by Alex Xu](https://bytebytego.com/?utm_source=substack)
 
 Happy system design!
