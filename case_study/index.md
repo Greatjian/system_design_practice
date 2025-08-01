@@ -1,11 +1,10 @@
 # Case Study
 
-- System Deisgn Interview, Volumn One (Alex Xu)
+- System Design Interview, Volumn One (Alex Xu)
 
-    * Rate Limiter
-    * Consistent Hashing
-    * Key-Value Store
-    * Unique ID Generator
+    * [Rate Limiter](rate_limiter.md)
+    * [Key-Value Store](key_value_store.md)
+    * [Unique ID Generator](./uuid_generator.md)
     * URL shortener
     * Web Crawler
     * Notification System
